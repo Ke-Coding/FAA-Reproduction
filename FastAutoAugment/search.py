@@ -16,13 +16,13 @@ from ray.tune.suggest import HyperOptSearch
 from ray.tune import register_trainable, run_experiments
 from tqdm import tqdm
 
-from FastAutoAugment.archive import remove_deplicates, policy_decoder
-from FastAutoAugment.augmentations import augment_list
-from FastAutoAugment.common import get_logger, add_filehandler
-from FastAutoAugment.data import get_dataloaders
-from FastAutoAugment.metrics import Accumulator
-from FastAutoAugment.networks import get_model, num_class
-from FastAutoAugment.train import train_and_eval
+from .archive import remove_deplicates, policy_decoder
+from .augmentations import augment_list
+from .common import get_logger, add_filehandler
+from .data import get_dataloaders
+from .metrics import Accumulator
+from .networks import get_model, num_class
+from .train import train_and_eval
 from theconf import Config, ConfigArgumentParser
 
 
@@ -31,7 +31,7 @@ top1_valid_by_cv = defaultdict(lambda: list)
 
 
 def step_w_log(self):
-    original = gorilla.get_original_attribute(ray.tune.trial_runner.TrialRunner, 'step')
+    original = gorilla.get_original_attribute(TrialRunner, 'step')
 
     # log
     cnts = OrderedDict()
@@ -47,7 +47,7 @@ def step_w_log(self):
     return original(self)
 
 
-patch = gorilla.Patch(ray.tune.trial_runner.TrialRunner, 'step', step_w_log, settings=gorilla.Settings(allow_hit=True))
+patch = gorilla.Patch(TrialRunner, 'step', step_w_log, settings=gorilla.Settings(allow_hit=True))
 gorilla.apply(patch)
 
 
