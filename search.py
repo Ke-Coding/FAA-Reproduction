@@ -142,7 +142,7 @@ if __name__ == '__main__':
     w = PyStopwatch()
 
     parser = ConfigArgumentParser(conflict_handler='resolve')
-    parser.add_argument('--dataroot', type=str, default='/data/private/pretrainedmodels', help='torchvision data folder')
+    parser.add_argument('--dataroot', type=str, default='../../datasets/pretrainedmodels', help='torchvision data folder')
     parser.add_argument('--until', type=int, default=5)
     parser.add_argument('--num-op', type=int, default=2)
     parser.add_argument('--num-policy', type=int, default=5)
@@ -163,7 +163,8 @@ if __name__ == '__main__':
     logger.info('configuration...')
     logger.info(json.dumps(Config.get().conf, sort_keys=True, indent=4))
     logger.info('initialize ray...')
-    ray.init(redis_address=args.redis)
+    # ray.init(redis_address=args.redis)
+    ray.init(include_webui=True)
 
     num_result_per_cv = 10
     cv_num = 5
