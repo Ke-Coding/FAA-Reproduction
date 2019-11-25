@@ -174,7 +174,7 @@ if __name__ == '__main__':
     logger.info('----- Train without Augmentations cv=%d ratio(test)=%.1f -----' % (cv_num, args.cv_ratio))
     w.start(tag='train_no_aug')
     paths = [_get_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_fold%d' % (args.cv_ratio, i)) for i in range(cv_num)]
-    print(paths)
+    print(paths)    # TODO: 把save_path（保存模型的路径）设置为expr中某个任务文件夹中的.sh文件所在路径下，而不是项目根下
     reqs = [
         train_model.remote(copy.deepcopy(copied_c), args.dataroot, Config.get()['aug'], args.cv_ratio, i, save_path=paths[i], skip_exist=True)
         for i in range(cv_num)]

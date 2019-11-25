@@ -171,7 +171,8 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, horovod=F
     train_sampler = None
     if split > 0.0:
         sss = StratifiedShuffleSplit(n_splits=5, test_size=split, random_state=0)
-        sss = sss.split(list(range(len(total_trainset))), total_trainset.targets)
+        # sss = sss.split(list(range(len(total_trainset))), total_trainset.targets)     # torchvision 0.4(local): targets
+        sss = sss.split(list(range(len(total_trainset))), total_trainset.train_labels)  # torchvision 0.2(sh36 r0.3.0): train_labels
         for _ in range(split_idx + 1):
             train_idx, valid_idx = next(sss)
 
