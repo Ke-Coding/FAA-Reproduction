@@ -159,7 +159,7 @@ if __name__ == '__main__':
         logger.info('decay=%.4f' % args.decay)
         Config.get()['optimizer']['decay'] = args.decay
 
-    add_filehandler(logger, os.path.join('models', '%s_%s_cv%.1f.log' % (Config.get()['dataset'], Config.get()['model']['type'], args.cv_ratio)))
+    add_filehandler(logger, '%s_%s_cv%.1f.log' % (Config.get()['dataset'], Config.get()['model']['type'], args.cv_ratio))
     logger.info('configuration...')
     logger.info(json.dumps(Config.get().conf, sort_keys=True, indent=4))
     logger.info('initialize ray...')
