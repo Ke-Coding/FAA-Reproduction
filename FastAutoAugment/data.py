@@ -93,10 +93,10 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, horovod=F
         transform_train.transforms.append(CutoutDefault(C.get()['cutout']))
 
     if dataset == 'cifar10':
-        total_trainset = torchvision.datasets.CIFAR10(root=dataroot, train=True, download=True, transform=transform_train)
-        testset = torchvision.datasets.CIFAR10(root=dataroot, train=False, download=True, transform=transform_test)
+        total_trainset = torchvision.datasets.CIFAR10(root=dataroot, train=True, download=False, transform=transform_train)
+        testset = torchvision.datasets.CIFAR10(root=dataroot, train=False, download=False, transform=transform_test)
     elif dataset == 'reduced_cifar10':
-        total_trainset = torchvision.datasets.CIFAR10(root=dataroot, train=True, download=True, transform=transform_train)
+        total_trainset = torchvision.datasets.CIFAR10(root=dataroot, train=True, download=False, transform=transform_train)
         sss = StratifiedShuffleSplit(n_splits=1, test_size=46000, random_state=0)   # 4000 trainset
         sss = sss.split(list(range(len(total_trainset))), total_trainset.targets)
         train_idx, valid_idx = next(sss)
@@ -104,17 +104,17 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, horovod=F
         total_trainset = Subset(total_trainset, train_idx)
         total_trainset.targets = targets
 
-        testset = torchvision.datasets.CIFAR10(root=dataroot, train=False, download=True, transform=transform_test)
+        testset = torchvision.datasets.CIFAR10(root=dataroot, train=False, download=False, transform=transform_test)
     elif dataset == 'cifar100':
-        total_trainset = torchvision.datasets.CIFAR100(root=dataroot, train=True, download=True, transform=transform_train)
-        testset = torchvision.datasets.CIFAR100(root=dataroot, train=False, download=True, transform=transform_test)
+        total_trainset = torchvision.datasets.CIFAR100(root=dataroot, train=True, download=False, transform=transform_train)
+        testset = torchvision.datasets.CIFAR100(root=dataroot, train=False, download=False, transform=transform_test)
     elif dataset == 'svhn':
-        trainset = torchvision.datasets.SVHN(root=dataroot, split='train', download=True, transform=transform_train)
-        extraset = torchvision.datasets.SVHN(root=dataroot, split='extra', download=True, transform=transform_train)
+        trainset = torchvision.datasets.SVHN(root=dataroot, split='train', download=False, transform=transform_train)
+        extraset = torchvision.datasets.SVHN(root=dataroot, split='extra', download=False, transform=transform_train)
         total_trainset = ConcatDataset([trainset, extraset])
-        testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=True, transform=transform_test)
+        testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=False, transform=transform_test)
     elif dataset == 'reduced_svhn':
-        total_trainset = torchvision.datasets.SVHN(root=dataroot, split='train', download=True, transform=transform_train)
+        total_trainset = torchvision.datasets.SVHN(root=dataroot, split='train', download=False, transform=transform_train)
         sss = StratifiedShuffleSplit(n_splits=1, test_size=73257-1000, random_state=0)  # 1000 trainset
         sss = sss.split(list(range(len(total_trainset))), total_trainset.targets)
         train_idx, valid_idx = next(sss)
@@ -122,7 +122,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, horovod=F
         total_trainset = Subset(total_trainset, train_idx)
         total_trainset.targets = targets
 
-        testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=True, transform=transform_test)
+        testset = torchvision.datasets.SVHN(root=dataroot, split='test', download=False, transform=transform_test)
     elif dataset == 'imagenet':
         total_trainset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), transform=transform_train)
         testset = ImageNet(root=os.path.join(dataroot, 'imagenet-pytorch'), split='val', transform=transform_test)
