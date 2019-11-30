@@ -26,9 +26,12 @@ from FastAutoAugment.networks import get_model, num_class
 from FastAutoAugment.train import train_and_eval
 from theconf import Config, ConfigArgumentParser
 
+CUDA_AVAILABLE, EXEC_ROOT, MODELS_ROOT, DATASET_ROOT = None, None, None, None
 
-cuda_is_available = torch.cuda.is_available()
-top1_valid_by_cv = defaultdict(lambda: list)
+
+def _check_directory(directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
 
 def step_w_log(self):
@@ -55,8 +58,10 @@ gorilla.apply(patch)
 logger = get_logger('Fast AutoAugment')
 
 
-def _get_path(dataset, model, tag):
-    return os.path.join(os.path.dirname(os.path.realpath(__file__)), 'models/%s_%s_%s.model' % (dataset, model, tag))     # TODO
+def _get_model_path(dataset, model, config): # os.path.dirname(os.path.realpath(__file__): abspath of search.py
+    # return os.path.join(os.path.dirname(os.path.realpath(__file__)), 'models/%s_%s_%s.model' % (dataset, model, tag))     # TODO
+    global MODELS_ROOT
+    return os.path.join(MODELS_ROOT, '%s_%s_%s.model' % (dataset, model, config))
 
 
 @ray.remote(num_gpus=4, max_calls=1)
@@ -101,7 +106,7 @@ def eval_tta(config, augment, reporter):
             corrects = []
             for loader in loaders:
                 data, label = next(loader)
-                if cuda_is_available:
+                if CUDA_AVAILABLE:
                     data = data.cuda()
                     label = label.cuda()
 
@@ -132,16 +137,16 @@ def eval_tta(config, augment, reporter):
 
     del model
     metrics = metrics / 'cnt'
-    gpu_secs = (time.time() - start_t) * (torch.cuda.device_count() if cuda_is_available else 1)
+    gpu_secs = (time.time() - start_t) * (torch.cuda.device_count() if CUDA_AVAILABLE else 1)
     reporter(minus_loss=metrics['minus_loss'], top1_valid=metrics['correct'], elapsed_time=gpu_secs, done=True)
     return metrics['correct']
 
 
-if __name__ == '__main__':
+def search():
     import json
     from pystopwatch2 import PyStopwatch
     w = PyStopwatch()
-
+    
     parser = ConfigArgumentParser(conflict_handler='resolve')
     parser.add_argument('--dataroot', type=str, default='../../datasets/pretrainedmodels', help='torchvision data folder')
     parser.add_argument('--until', type=int, default=5)
@@ -150,36 +155,68 @@ if __name__ == '__main__':
     parser.add_argument('--num-search', type=int, default=200)
     parser.add_argument('--cv-ratio', type=float, default=0.4)
     parser.add_argument('--decay', type=float, default=-1)
-    parser.add_argument('--redis', type=str, default='gpu-cloud-vnode30.dakao.io:23655')
+    parser.add_argument('--redis', type=str, default='')
     parser.add_argument('--per-class', action='store_true')
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--smoke-test', action='store_true')
     args = parser.parse_args()
-
+    
+    global CUDA_AVAILABLE, EXEC_ROOT, MODELS_ROOT, DATASET_ROOT
+    CUDA_AVAILABLE = torch.cuda.is_available()
+    EXEC_ROOT = os.getcwd()                         # fast-autoaugment/experiments/xxx
+    logger.info('EXEC_ROOT: %s' % EXEC_ROOT)
+    MODELS_ROOT = os.path.join(EXEC_ROOT, 'models') # fast-autoaugment/experiments/xxx/models
+    logger.info('MODELS_ROOT: %s' % MODELS_ROOT)
+    DATASET_ROOT = os.path.abspath(args.dataroot)   # fast-autoaugment/datasets/pretrainedmodels
+    logger.info('DATASET_ROOT: %s' % DATASET_ROOT)
+    
+    _check_directory(MODELS_ROOT)
+    _check_directory(DATASET_ROOT)
+    
     if args.decay > 0:
         logger.info('decay=%.4f' % args.decay)
         Config.get()['optimizer']['decay'] = args.decay
-
+    
     add_filehandler(logger, '%s_%s_cv%.1f.log' % (Config.get()['dataset'], Config.get()['model']['type'], args.cv_ratio))
     logger.info('configuration...')
     logger.info(json.dumps(Config.get().conf, sort_keys=True, indent=4))
     logger.info('initialize ray...')
     # ray.init(redis_address=args.redis)
-    ray.init(include_webui=True)
-
+    address_info = ray.init(include_webui=True)
+    logger.info('ray initialization: address information:')
+    logger.info(str(address_info))
+    
     num_result_per_cv = 10
     cv_num = 5
     copied_c = copy.deepcopy(Config.get().conf)
-
+    
     logger.info('search augmentation policies, dataset=%s model=%s' % (Config.get()['dataset'], Config.get()['model']['type']))
-    logger.info('----- Train without Augmentations cv=%d ratio(test)=%.1f -----' % (cv_num, args.cv_ratio))
+    logger.info('----- [Phase 1.] Train without Augmentations cv=%d ratio(test)=%.1f -----' % (cv_num, args.cv_ratio))
     w.start(tag='train_no_aug')
-    paths = [_get_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_fold%d' % (args.cv_ratio, i)) for i in range(cv_num)]
-    print(paths)    # TODO: 把save_path（保存模型的路径）设置为expr中某个任务文件夹中的.sh文件所在路径下，而不是项目根下
+    
+    model_paths = [         # len(model_paths): cv_num(num of data folders)
+        _get_model_path(
+            dataset=Config.get()['dataset'],
+            model=Config.get()['model']['type'],
+            config='ratio%.1f_fold%d' % (args.cv_ratio, i)  # without_aug
+        )
+        for i in range(cv_num)
+    ]
+    print('model_paths:', model_paths)
+    
     reqs = [
-        train_model.remote(copy.deepcopy(copied_c), args.dataroot, Config.get()['aug'], args.cv_ratio, i, save_path=paths[i], skip_exist=True)
-        for i in range(cv_num)]
-
+        train_model.remote(
+            config=copy.deepcopy(copied_c),
+            dataroot=DATASET_ROOT,
+            augment=Config.get()['aug'],
+            cv_ratio_test=args.cv_ratio,
+            cv_fold=i,
+            save_path=model_paths[i],
+            skip_exist=True
+        )
+        for i in range(cv_num)
+    ]
+    
     tqdm_epoch = tqdm(range(Config.get()['epoch']))
     is_done = False
     for epoch in tqdm_epoch:
@@ -187,11 +224,11 @@ if __name__ == '__main__':
             epochs_per_cv = OrderedDict()
             for cv_idx in range(cv_num):
                 try:
-                    latest_ckpt = torch.load(paths[cv_idx])
+                    latest_ckpt = torch.load(model_paths[cv_idx])
                     if 'epoch' not in latest_ckpt:
                         epochs_per_cv['cv%d' % (cv_idx + 1)] = Config.get()['epoch']
                         continue
-                    epochs_per_cv['cv%d' % (cv_idx+1)] = latest_ckpt['epoch']
+                    epochs_per_cv['cv%d' % (cv_idx + 1)] = latest_ckpt['epoch']
                 except Exception as e:
                     continue
             tqdm_epoch.set_postfix(epochs_per_cv)
@@ -202,19 +239,19 @@ if __name__ == '__main__':
             time.sleep(10)
         if is_done:
             break
-
+    
     logger.info('getting results...')
     pretrain_results = ray.get(reqs)
     for r_model, r_cv, r_dict in pretrain_results:
-        logger.info('model=%s cv=%d top1_train=%.4f top1_valid=%.4f' % (r_model, r_cv+1, r_dict['top1_train'], r_dict['top1_valid']))
+        logger.info('model=%s cv=%d top1_train=%.4f top1_valid=%.4f' % (r_model, r_cv + 1, r_dict['top1_train'], r_dict['top1_valid']))
     logger.info('processed in %.4f secs' % w.pause('train_no_aug'))
-
+    
     if args.until == 1:
         sys.exit(0)
-
-    logger.info('----- Search Test-Time Augmentation Policies -----')
+    
+    logger.info('----- [Phase 2.] Search Test-Time Augmentation Policies -----')
     w.start(tag='search')
-
+    
     ops = augment_list(False)
     space = {}
     for i in range(args.num_policy):
@@ -222,27 +259,27 @@ if __name__ == '__main__':
             space['policy_%d_%d' % (i, j)] = hp.choice('policy_%d_%d' % (i, j), list(range(0, len(ops))))
             space['prob_%d_%d' % (i, j)] = hp.uniform('prob_%d_ %d' % (i, j), 0.0, 1.0)
             space['level_%d_%d' % (i, j)] = hp.uniform('level_%d_ %d' % (i, j), 0.0, 1.0)
-
+    
     final_policy_set = []
     total_computation = 0
-    reward_attr = 'top1_valid'      # top1_valid or minus_loss
+    reward_attr = 'top1_valid'  # top1_valid or minus_loss
     for _ in range(1):  # run multiple times.
         for cv_fold in range(cv_num):
             name = "search_%s_%s_fold%d_ratio%.1f" % (Config.get()['dataset'], Config.get()['model']['type'], cv_fold, args.cv_ratio)
             print(name)
-            register_trainable(name, lambda augs, rpt: eval_tta(copy.deepcopy(copied_c), augs, rpt))
-            algo = HyperOptSearch(space, max_concurrent=4*20, reward_attr=reward_attr)
-
+            register_trainable(name, lambda augs, rpt: eval_tta(copy.deepcopy(copied_c), augs, rpt))    # augs: a dict, just like the 'exp_config'
+            algo = HyperOptSearch(space, max_concurrent=4 * 20, reward_attr=reward_attr)
+            
             exp_config = {
                 name: {
-                    'run': name,
-                    'num_samples': 4 if args.smoke_test else args.num_search,
+                    'run'                : name,
+                    'num_samples'        : 4 if args.smoke_test else args.num_search,
                     'resources_per_trial': {'gpu': 1},
-                    'stop': {'training_iteration': args.num_policy},
-                    'config': {
-                        'dataroot': args.dataroot, 'save_path': paths[cv_fold],
+                    'stop'               : {'training_iteration': args.num_policy},
+                    'config'             : {
+                        'dataroot'     : DATASET_ROOT, 'save_path': model_paths[cv_fold],
                         'cv_ratio_test': args.cv_ratio, 'cv_fold': cv_fold,
-                        'num_op': args.num_op, 'num_policy': args.num_policy
+                        'num_op'       : args.num_op, 'num_policy': args.num_policy
                     },
                 }
             }
@@ -250,30 +287,30 @@ if __name__ == '__main__':
             print()
             results = [x for x in results if x.last_result is not None]
             results = sorted(results, key=lambda x: x.last_result[reward_attr], reverse=True)
-
+            
             # calculate computation usage
             for result in results:
                 total_computation += result.last_result['elapsed_time']
-
+            
             for result in results[:num_result_per_cv]:
                 final_policy = policy_decoder(result.config, args.num_policy, args.num_op)
                 logger.info('loss=%.12f top1_valid=%.4f %s' % (result.last_result['minus_loss'], result.last_result['top1_valid'], final_policy))
-
+                
                 final_policy = remove_deplicates(final_policy)
                 final_policy_set.extend(final_policy)
-
+    
     logger.info(json.dumps(final_policy_set))
     logger.info('final_policy=%d' % len(final_policy_set))
     logger.info('processed in %.4f secs, gpu hours=%.4f' % (w.pause('search'), total_computation / 3600.))
-    logger.info('----- Train with Augmentations model=%s dataset=%s aug=%s ratio(test)=%.1f -----' % (Config.get()['model']['type'], Config.get()['dataset'], Config.get()['aug'], args.cv_ratio))
+    logger.info('----- [Phase 3.] Train with Augmentations model=%s dataset=%s aug=%s ratio(test)=%.1f -----' % (Config.get()['model']['type'], Config.get()['dataset'], Config.get()['aug'], args.cv_ratio))
     w.start(tag='train_aug')
-
+    
     num_experiments = 5
-    default_path = [_get_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_default%d' % (args.cv_ratio, _)) for _ in range(num_experiments)]
-    augment_path = [_get_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_augment%d' % (args.cv_ratio, _)) for _ in range(num_experiments)]
-    reqs = [train_model.remote(copy.deepcopy(copied_c), args.dataroot, Config.get()['aug'], 0.0, 0, save_path=default_path[_], skip_exist=True) for _ in range(num_experiments)] + \
-           [train_model.remote(copy.deepcopy(copied_c), args.dataroot, final_policy_set, 0.0, 0, save_path=augment_path[_]) for _ in range(num_experiments)]
-
+    default_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_default%d' % (args.cv_ratio, _)) for _ in range(num_experiments)]
+    augment_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_augment%d' % (args.cv_ratio, _)) for _ in range(num_experiments)]
+    reqs = [train_model.remote(copy.deepcopy(copied_c), DATASET_ROOT, Config.get()['aug'], 0.0, 0, save_path=default_path[_], skip_exist=True) for _ in range(num_experiments)] + \
+           [train_model.remote(copy.deepcopy(copied_c), DATASET_ROOT, final_policy_set, 0.0, 0, save_path=augment_path[_]) for _ in range(num_experiments)]
+    
     tqdm_epoch = tqdm(range(Config.get()['epoch']))
     is_done = False
     for epoch in tqdm_epoch:
@@ -292,19 +329,19 @@ if __name__ == '__main__':
                         epochs['augment_exp%d' % (exp_idx + 1)] = latest_ckpt['epoch']
                 except:
                     pass
-
+            
             tqdm_epoch.set_postfix(epochs)
-            if len(epochs) == num_experiments*2 and min(epochs.values()) >= Config.get()['epoch']:
+            if len(epochs) == num_experiments * 2 and min(epochs.values()) >= Config.get()['epoch']:
                 is_done = True
-            if len(epochs) == num_experiments*2 and min(epochs.values()) >= epoch:
+            if len(epochs) == num_experiments * 2 and min(epochs.values()) >= epoch:
                 break
             time.sleep(10)
         if is_done:
             break
-
+    
     logger.info('getting results...')
     final_results = ray.get(reqs)
-
+    
     for train_mode in ['default', 'augment']:
         avg = 0.
         for _ in range(num_experiments):
@@ -314,5 +351,10 @@ if __name__ == '__main__':
         avg /= num_experiments
         logger.info('[%s] top1_test average=%.4f (#experiments=%d)' % (train_mode, avg, num_experiments))
     logger.info('processed in %.4f secs' % w.pause('train_aug'))
-
+    
     logger.info(w)
+
+
+if __name__ == '__main__':
+    search()
+
