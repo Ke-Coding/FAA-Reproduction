@@ -148,7 +148,7 @@ def search():
     w = PyStopwatch()
     
     parser = ConfigArgumentParser(conflict_handler='resolve')
-    parser.add_argument('--dataroot', type=str, default='../../datasets/pretrainedmodels', help='torchvision data folder')
+    # parser.add_argument('--dataroot', type=str, default='~/datasets', help='torchvision data folder')
     parser.add_argument('--until', type=int, default=5)
     parser.add_argument('--num-op', type=int, default=2)
     parser.add_argument('--num-policy', type=int, default=5)
@@ -167,7 +167,8 @@ def search():
     logger.info('EXEC_ROOT: %s' % EXEC_ROOT)
     MODELS_ROOT = os.path.join(EXEC_ROOT, 'models') # fast-autoaugment/experiments/xxx/models
     logger.info('MODELS_ROOT: %s' % MODELS_ROOT)
-    DATASET_ROOT = os.path.abspath(args.dataroot)   # fast-autoaugment/datasets/pretrainedmodels
+    
+    DATASET_ROOT = os.path.abspath(os.path.join('~', 'datasets', Config.get()['dataset'].lower()))   # fast-autoaugment/datasets/pretrainedmodels
     logger.info('DATASET_ROOT: %s' % DATASET_ROOT)
     
     _check_directory(MODELS_ROOT)
