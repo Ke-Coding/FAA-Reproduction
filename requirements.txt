@@ -1,7 +1,8 @@
 git+https://github.com/wbaek/theconf
 git+https://github.com/ildoonet/pytorch-gradual-warmup-lr.git
 git+https://github.com/ildoonet/pystopwatch2.git
-git+https://github.com/hyperopt/hyperopt.git
+# git+https://github.com/hyperopt/hyperopt.git
+hyperopt
 pretrainedmodels
 tqdm
 tensorboardx
