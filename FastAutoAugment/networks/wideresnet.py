@@ -23,20 +23,24 @@ class WideBasic(nn.Module):
         super(WideBasic, self).__init__()
         self.bn1 = nn.BatchNorm2d(in_planes, momentum=0.9)
         self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, padding=1, bias=True)
-        self.dropout = nn.Dropout(p=dropout_rate)
+        self.using_dropout = dropout_rate is not None
+        if self.using_dropout:
+            self.dropout = nn.Dropout(p=dropout_rate)
         self.bn2 = nn.BatchNorm2d(planes, momentum=0.9)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=True)
 
-        self.shortcut = nn.Sequential()
-        if stride != 1 or in_planes != planes:
+        self.is_identity = stride == 1 and in_planes == planes
+        if not self.is_identity:
             self.shortcut = nn.Sequential(
                 nn.Conv2d(in_planes, planes, kernel_size=1, stride=stride, bias=True),
             )
 
     def forward(self, x):
-        out = self.dropout(self.conv1(F.relu(self.bn1(x))))
-        out = self.conv2(F.relu(self.bn2(out)))
-        out += self.shortcut(x)
+        out = self.conv1(F.relu(self.bn1(x), inplace=True))
+        if self.using_dropout:
+            out = self.dropout(out)
+        out = self.conv2(F.relu(self.bn2(out), inplace=True))
+        out += x if self.is_identity else self.shortcut(x)
 
         return out
 
@@ -76,7 +80,7 @@ class WideResNet(nn.Module):
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        out = F.relu(self.bn1(out))
+        out = F.relu(self.bn1(out), inplace=True)
         # out = F.avg_pool2d(out, 8)
         out = F.adaptive_avg_pool2d(out, (1, 1))
         out = out.view(out.size(0), -1)

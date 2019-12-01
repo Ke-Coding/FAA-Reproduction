@@ -36,7 +36,7 @@ class Shortcut(nn.Module):
         self.bn = nn.BatchNorm2d(out_ch)
 
     def forward(self, x):
-        h = F.relu(x)
+        h = F.relu(x, inplace=True)
 
         h1 = F.avg_pool2d(h, 1, self.stride)
         h1 = self.conv1(h1)

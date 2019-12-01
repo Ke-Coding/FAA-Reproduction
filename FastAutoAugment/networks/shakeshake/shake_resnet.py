@@ -67,7 +67,7 @@ class ShakeResNet(nn.Module):
         h = self.layer1(h)
         h = self.layer2(h)
         h = self.layer3(h)
-        h = F.relu(h)
+        h = F.relu(h, inplace=True)
         h = F.avg_pool2d(h, 8)
         h = h.view(-1, self.in_chs[3])
         h = self.fc_out(h)
