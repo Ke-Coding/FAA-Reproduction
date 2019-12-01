@@ -11,3 +11,6 @@ matplotlib
 psutil
 requests
 # horovod==0.16.1
+aiohttp
+setproctitle
+gorilla
