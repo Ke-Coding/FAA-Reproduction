@@ -170,7 +170,7 @@ def search():
     MODELS_ROOT = os.path.join(EXEC_ROOT, 'models') # fast-autoaugment/experiments/xxx/models
     logger.info('MODELS_ROOT: %s' % MODELS_ROOT)
     
-    DATASET_ROOT = os.path.abspath(os.path.join('~', 'datasets', Config.get()['dataset'].lower()))   # ~/datasets/cifar10
+    DATASET_ROOT = os.path.abspath(os.path.join(os.path.expanduser('~'), 'datasets', Config.get()['dataset'].lower()))   # ~/datasets/cifar10
     logger.info('DATASET_ROOT: %s' % DATASET_ROOT)
     
     _check_directory(MODELS_ROOT)
