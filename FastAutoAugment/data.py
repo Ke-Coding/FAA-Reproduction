@@ -29,6 +29,17 @@ _CIFAR_MEAN, _CIFAR_STD = (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
 
 
 def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, horovod=False, target_lb=-1):
+    # torchvision 0.2(sh36 r0.3.0): train_labels
+    # torchvision 0.4(local): targets
+    # torchvision 0.4.1(sh36 r0.3.2): (not have attr '__version__')targets
+    using_attr_train_labels = False
+    try:
+        torchvision_version = torchvision.__version__
+        if torchvision_version < '0.4':
+            using_attr_train_labels = True
+    except AttributeError:
+        pass
+    
     if 'cifar' in dataset or 'svhn' in dataset:
         transform_train = transforms.Compose([
             transforms.RandomCrop(32, padding=4),
@@ -118,9 +129,7 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, horovod=F
         sss = StratifiedShuffleSplit(n_splits=1, test_size=73257-1000, random_state=0)  # 1000 trainset
         sss = sss.split(
             list(range(len(total_trainset))),
-            # torchvision 0.2(sh36 r0.3.0): train_labels
-            # torchvision 0.4(local): targets
-            total_trainset.train_labels if torchvision.__version__ < '0.4' else total_trainset.targets
+            total_trainset.train_labels if using_attr_train_labels else total_trainset.targets
         )
         train_idx, valid_idx = next(sss)
         targets = [total_trainset.targets[idx] for idx in train_idx]
@@ -178,11 +187,8 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, horovod=F
         sss = StratifiedShuffleSplit(n_splits=5, test_size=split, random_state=0)
         sss = sss.split(
             list(range(len(total_trainset))),
-            # torchvision 0.2(sh36 r0.3.0): train_labels
-            # torchvision 0.4(local): targets
-            total_trainset.train_labels if torchvision.__version__ < '0.4' else total_trainset.targets
+            total_trainset.train_labels if using_attr_train_labels else total_trainset.targets
         )
-
         for _ in range(split_idx + 1):
             train_idx, valid_idx = next(sss)
 
