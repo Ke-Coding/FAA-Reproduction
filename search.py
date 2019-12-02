@@ -160,7 +160,9 @@ def search():
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--smoke-test', action='store_true')
     args = parser.parse_args()
-    
+
+    add_filehandler(logger, '%s_%s_cv%.1f.log' % (Config.get()['dataset'], Config.get()['model']['type'], args.cv_ratio))
+
     global CUDA_AVAILABLE, EXEC_ROOT, MODELS_ROOT, DATASET_ROOT
     CUDA_AVAILABLE = torch.cuda.is_available()
     EXEC_ROOT = os.getcwd()                         # fast-autoaugment/experiments/xxx
@@ -168,7 +170,7 @@ def search():
     MODELS_ROOT = os.path.join(EXEC_ROOT, 'models') # fast-autoaugment/experiments/xxx/models
     logger.info('MODELS_ROOT: %s' % MODELS_ROOT)
     
-    DATASET_ROOT = os.path.abspath(os.path.join('~', 'datasets', Config.get()['dataset'].lower()))   # fast-autoaugment/datasets/pretrainedmodels
+    DATASET_ROOT = os.path.abspath(os.path.join('~', 'datasets', Config.get()['dataset'].lower()))   # ~/datasets/cifar10
     logger.info('DATASET_ROOT: %s' % DATASET_ROOT)
     
     _check_directory(MODELS_ROOT)
@@ -178,7 +180,6 @@ def search():
         logger.info('decay=%.4f' % args.decay)
         Config.get()['optimizer']['decay'] = args.decay
     
-    add_filehandler(logger, '%s_%s_cv%.1f.log' % (Config.get()['dataset'], Config.get()['model']['type'], args.cv_ratio))
     logger.info('configuration...')
     logger.info(json.dumps(Config.get().conf, sort_keys=True, indent=4))
     logger.info('initialize ray...')

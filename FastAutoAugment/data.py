@@ -116,7 +116,12 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, horovod=F
     elif dataset == 'reduced_svhn':
         total_trainset = torchvision.datasets.SVHN(root=dataroot, split='train', download=False, transform=transform_train)
         sss = StratifiedShuffleSplit(n_splits=1, test_size=73257-1000, random_state=0)  # 1000 trainset
-        sss = sss.split(list(range(len(total_trainset))), total_trainset.targets)
+        sss = sss.split(
+            list(range(len(total_trainset))),
+            # torchvision 0.2(sh36 r0.3.0): train_labels
+            # torchvision 0.4(local): targets
+            total_trainset.train_labels if torchvision.__version__ < '0.4' else total_trainset.targets
+        )
         train_idx, valid_idx = next(sss)
         targets = [total_trainset.targets[idx] for idx in train_idx]
         total_trainset = Subset(total_trainset, train_idx)
@@ -171,8 +176,13 @@ def get_dataloaders(dataset, batch, dataroot, split=0.15, split_idx=0, horovod=F
     train_sampler = None
     if split > 0.0:
         sss = StratifiedShuffleSplit(n_splits=5, test_size=split, random_state=0)
-        # sss = sss.split(list(range(len(total_trainset))), total_trainset.targets)     # torchvision 0.4(local): targets
-        sss = sss.split(list(range(len(total_trainset))), total_trainset.train_labels)  # torchvision 0.2(sh36 r0.3.0): train_labels
+        sss = sss.split(
+            list(range(len(total_trainset))),
+            # torchvision 0.2(sh36 r0.3.0): train_labels
+            # torchvision 0.4(local): targets
+            total_trainset.train_labels if torchvision.__version__ < '0.4' else total_trainset.targets
+        )
+
         for _ in range(split_idx + 1):
             train_idx, valid_idx = next(sss)
 
