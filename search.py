@@ -37,7 +37,7 @@ def _check_directory(directory):
 
 
 def _get_model_path(dataset, model, config):  # os.path.dirname(os.path.realpath(__file__): abspath of search.py
-    # return os.path.join(os.path.dirname(os.path.realpath(__file__)), 'models/%s_%s_%s.model' % (dataset, model, tag))     # TODO
+    # return os.path.join(os.path.dirname(os.path.realpath(__file__)), 'models/%s_%s_%s.model' % (dataset, model, tag))
     global MODEL_ROOT
     return os.path.join(MODEL_ROOT, '%s_%s_%s.model' % (dataset, model, config))
 
