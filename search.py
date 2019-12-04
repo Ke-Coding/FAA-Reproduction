@@ -8,6 +8,7 @@ import torch
 import numpy as np
 
 import json
+import argparse
 import gorilla
 from hyperopt import hp
 import ray
@@ -129,8 +130,8 @@ def eval_tta(config, augment, reporter):
             corrects_max = np.max(corrects, axis=0).squeeze()
             metrics.add_dict({
                 'minus_loss': -1 * np.sum(losses_min),
-                'correct' : np.sum(corrects_max),
-                'cnt' : len(corrects_max)
+                'correct': np.sum(corrects_max),
+                'cnt': len(corrects_max)
             })
             del corrects, corrects_max
     except StopIteration:
@@ -143,7 +144,7 @@ def eval_tta(config, augment, reporter):
     return metrics['correct']
 
 
-def prepare() -> object:
+def prepare() -> argparse.Namespace:
     parser = ConfigArgumentParser(conflict_handler='resolve')
     # parser.add_argument('--dataroot', type=str, default='~/datasets', help='torchvision data folder')
     parser.add_argument('--until', type=int, default=5)
@@ -159,7 +160,7 @@ def prepare() -> object:
     # parser.add_argument('--per_class', action='store_true')
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--smoke_test', action='store_true')
-    args = parser.parse_args()
+    args: argparse.Namespace = parser.parse_args()
     
     add_filehandler(logger, '%s_%s_cv%.1f.log' % (Config.get()['dataset'], Config.get()['model']['type'], args.cv_ratio))
     
