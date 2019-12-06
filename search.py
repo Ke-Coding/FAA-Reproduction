@@ -30,6 +30,8 @@ from theconf import Config, ConfigArgumentParser
 from pystopwatch2 import PyStopwatch
 
 EXEC_ROOT, MODEL_ROOT, MODEL_PATHS, DATASET_ROOT = None, None, None, None
+timer = PyStopwatch()
+logger = get_logger('Fast AutoAugment')
 
 
 def _check_directory(directory):
@@ -58,13 +60,6 @@ def step_w_log(self):
         best_top1_acc = max(best_top1_acc, trial.last_result['top1_valid'])
     print('iter', self._iteration, 'top1_acc=%.3f' % best_top1_acc, cnts, end='\r')
     return original(self)
-
-
-patch = gorilla.Patch(TrialRunner, 'step', step_w_log, settings=gorilla.Settings(allow_hit=True))
-gorilla.apply(patch)
-
-watcher = PyStopwatch()
-logger = get_logger('Fast AutoAugment')
 
 
 @ray.remote(num_gpus=4, max_calls=1)
@@ -208,9 +203,9 @@ def prepare() -> argparse.Namespace:
 
 def pretrain_k_folds(copied_conf, cv_ratio, num_fold) -> None:
     global MODEL_PATHS, DATASET_ROOT
-    global logger, watcher
+    global logger, timer
     logger.info('----- [Phase 1.] Train without Augmentations cv=%d ratio(test)=%.1f -----' % (num_fold, cv_ratio))
-    watcher.start(tag='train_no_aug')
+    timer.start(tag='train_no_aug')
     
     reqs = [
         train_model.remote(
@@ -252,14 +247,14 @@ def pretrain_k_folds(copied_conf, cv_ratio, num_fold) -> None:
     pretrain_results = ray.get(reqs)
     for r_model, r_cv, r_dict in pretrain_results:
         logger.info('model=%s cv=%d top1_train=%.4f top1_valid=%.4f' % (r_model, r_cv + 1, r_dict['top1_train'], r_dict['top1_valid']))
-    logger.info('processed in %.4f secs' % watcher.pause('train_no_aug'))
+    logger.info('processed in %.4f secs' % timer.pause('train_no_aug'))
 
 
 def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_policy, num_op, smoke_test, num_search, resume) -> list:
-    global MODEL_PATHS, DATASET_ROOT
-    global logger, watcher
+    global MODEL_ROOT, MODEL_PATHS, DATASET_ROOT
+    global logger, timer
     logger.info('----- [Phase 2.] Search Test-Time Augmentation Policies -----')
-    watcher.start(tag='search')
+    timer.start(tag='search')
     
     ops = augment_list(False)
     space = {}
@@ -310,19 +305,22 @@ def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_
                 
                 final_policy = remove_deplicates(final_policy)
                 final_policy_set.extend(final_policy)
-    
+
+    with open(os.path.join(MODEL_ROOT, 'final_policy_set.json', 'wb')) as fp:
+        json.dump(final_policy_set, fp, indent=4)
+
     logger.info(json.dumps(final_policy_set))
-    logger.info('final_policy=%d' % len(final_policy_set))
-    logger.info('processed in %.4f secs, gpu hours=%.4f' % (watcher.pause('search'), total_computation / 3600.))
+    logger.info('len(final_policy_set)=%d' % len(final_policy_set))
+    logger.info('processed in %.4f secs, gpu hours=%.4f' % (timer.pause('search'), total_computation / 3600.))
     
     return final_policy_set
 
 
 def retrain(copied_conf, final_policy_set, cv_ratio, retrain_times):
     global DATASET_ROOT
-    global logger, watcher
+    global logger, timer
     logger.info('----- [Phase 3.] Train with Augmentations model=%s dataset=%s aug=%s ratio(test)=%.1f -----' % (Config.get()['model']['type'], Config.get()['dataset'], Config.get()['aug'], cv_ratio))
-    watcher.start(tag='train_aug')
+    timer.start(tag='train_aug')
     
     default_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_default%d' % (cv_ratio, _)) for _ in range(retrain_times)]
     augment_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_augment%d' % (cv_ratio, _)) for _ in range(retrain_times)]
@@ -368,12 +366,15 @@ def retrain(copied_conf, final_policy_set, cv_ratio, retrain_times):
             avg += r_dict['top1_test']
         avg /= retrain_times
         logger.info('[%s] top1_test average=%.4f (#experiments=%d)' % (train_mode, avg, retrain_times))
-    logger.info('processed in %.4f secs' % watcher.pause('train_aug'))
+    logger.info('processed in %.4f secs' % timer.pause('train_aug'))
     
-    logger.info(watcher)
+    logger.info(timer)
 
 
 def main():
+    patch = gorilla.Patch(TrialRunner, 'step', step_w_log, settings=gorilla.Settings(allow_hit=True))
+    gorilla.apply(patch)
+
     args = prepare()
     copied_conf = copy.deepcopy(Config.get().conf)
     
