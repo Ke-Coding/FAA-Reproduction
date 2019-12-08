@@ -63,24 +63,24 @@ def step_w_log(self):
 
 
 @ray.remote(num_gpus=4, max_calls=1)
-def train_model(config, dataroot, augment_replace: str, cv_ratio_test, fold_idx, save_path=None, only_eval=False):  # TODO: 解耦这里的config相关操作
+def train_model(config, dataroot, augment_replace: str, testset_ratio, fold_idx, model_path=None, only_eval=False):  # TODO: 解耦这里的config相关操作
     """
     pretrain:
         config=copy.deepcopy(copied_conf),      # 最原始的.yaml文件
         dataroot=DATASET_ROOT,
         augment_replace=Config.get()['aug'],    # 不进行augment_replace，augment_replace就是最原始的.yaml文件的aug
-        cv_ratio_test=cv_ratio,                 # 默认是0.4
+        testset_ratio=testset_ratio,                 # 默认是0.4
         fold_idx=fold_idx,                      # 0至num_fold
-        save_path=MODEL_PATHS[fold_idx],
+        model_path=MODEL_PATHS[fold_idx],
         only_eval=True                          # pretrain：only_eval
     
     retrain:
         config=copy.deepcopy(copied_conf),
         dataroot=DATASET_ROOT,
         augment_replace=Config.get()['aug']或final_policy_set,    # .yaml中的默认aug，和搜出来的aug
-        cv_ratio_test=0.0,
+        testset_ratio=0.0,
         fold_idx=0,
-        save_path=default_path[retrain_idx]或augment_path[retrain_idx],
+        model_path=default_path[retrain_idx]或augment_path[retrain_idx],
         only_eval=True或False                   # 默认aug：only_eval，搜出aug：不only_eval
     """
     
@@ -91,11 +91,11 @@ def train_model(config, dataroot, augment_replace: str, cv_ratio_test, fold_idx,
     result = train_and_eval(
         tag=None,
         dataroot=dataroot,
-        test_ratio=cv_ratio_test,
+        testset_ratio=testset_ratio,
         fold_idx=fold_idx,
         reporter=None,
         metric='last',
-        save_path=save_path,
+        model_path=model_path,
         only_eval=only_eval,
         horovod=False,
     )
@@ -105,14 +105,15 @@ def train_model(config, dataroot, augment_replace: str, cv_ratio_test, fold_idx,
 def eval_tta(config, exp_config, reporter):
     Config.get()
     Config.get().conf = config
-    cv_ratio_test, fold_idx, save_path = exp_config['cv_ratio_test'], exp_config['fold_idx'], exp_config['save_path']
+    testset_ratio, fold_idx, model_path = exp_config['testset_ratio'], exp_config['fold_idx'], exp_config['model_path']
+    # testset_ratio: 默认0.4
     
     # setup - provided augmentation rules
     Config.get()['aug'] = policy_decoder(exp_config, exp_config['num_policy'], exp_config['num_op'])
     
     # eval
     model = get_model(Config.get()['model'], num_class(Config.get()['dataset']))
-    ckpt = torch.load(save_path)
+    ckpt = torch.load(model_path)
     if 'model' in ckpt:
         model.load_state_dict(ckpt['model'])
     else:
@@ -121,7 +122,7 @@ def eval_tta(config, exp_config, reporter):
     
     loaders = []
     for _ in range(exp_config['num_policy']):  # TODO
-        _, tl, validloader, tl2 = get_dataloaders(Config.get()['dataset'], Config.get()['batch'], exp_config['dataroot'], cv_ratio_test, split_idx=fold_idx)
+        _, tl, validloader, tl2 = get_dataloaders(Config.get()['dataset'], Config.get()['batch'], exp_config['dataroot'], testset_ratio=testset_ratio, split_idx=fold_idx)
         loaders.append(iter(validloader))
         del tl, tl2
     
@@ -179,7 +180,7 @@ def prepare() -> argparse.Namespace:
     parser.add_argument('--num_policy', type=int, default=5)
     parser.add_argument('--num_search', type=int, default=200)
     parser.add_argument('--num_retrain', type=int, default=5)
-    parser.add_argument('--cv_ratio', type=float, default=0.4)
+    parser.add_argument('--testset_ratio', type=float, default=0.4)
     parser.add_argument('--decay', type=float, default=-1)
     parser.add_argument('--redis', type=str, default='')
     # parser.add_argument('--per_class', action='store_true')
@@ -187,7 +188,7 @@ def prepare() -> argparse.Namespace:
     parser.add_argument('--smoke_test', action='store_true')
     args: argparse.Namespace = parser.parse_args()
     
-    add_filehandler(logger, '%s_%s_cv%.1f.log' % (Config.get()['dataset'], Config.get()['model']['type'], args.cv_ratio))
+    add_filehandler(logger, '%s_%s_cv%.1f.log' % (Config.get()['dataset'], Config.get()['model']['type'], args.testset_ratio))
     
     logger.info('args type: %s' % str(type(args)))
     
@@ -208,7 +209,7 @@ def prepare() -> argparse.Namespace:
         _get_model_path(
             dataset=Config.get()['dataset'],
             model=Config.get()['model']['type'],
-            config='ratio%.1f_fold%d' % (args.cv_ratio, i)  # without_aug
+            config='ratio%.1f_fold%d' % (args.testset_ratio, i)  # without_aug
         )
         for i in range(args.num_fold)
     ]
@@ -231,10 +232,10 @@ def prepare() -> argparse.Namespace:
     return args
 
 
-def pretrain_k_folds(copied_conf, cv_ratio, num_fold) -> None:
+def pretrain_k_folds(copied_conf, testset_ratio, num_fold) -> None:
     global MODEL_PATHS, DATASET_ROOT
     global logger, timer
-    logger.info('----- [Phase 1.] Train with Default Augmentations cv=%d ratio(test)=%.1f -----' % (num_fold, cv_ratio))
+    logger.info('----- [Phase 1.] Train with Default Augmentations cv=%d testset ratio=%.2f -----' % (num_fold, testset_ratio))
     timer.start(tag='train_no_aug')
     
     pretrain_reqs = [
@@ -242,9 +243,9 @@ def pretrain_k_folds(copied_conf, cv_ratio, num_fold) -> None:
             config=copy.deepcopy(copied_conf),
             dataroot=DATASET_ROOT,
             augment_replace=Config.get()['aug'],    # .yaml中的aug，即default的aug
-            cv_ratio_test=cv_ratio,
+            testset_ratio=testset_ratio,
             fold_idx=fold_idx,
-            save_path=MODEL_PATHS[fold_idx],
+            model_path=MODEL_PATHS[fold_idx],
             only_eval=True
         )
         for fold_idx in range(num_fold)
@@ -280,7 +281,7 @@ def pretrain_k_folds(copied_conf, cv_ratio, num_fold) -> None:
     logger.info('processed in %.4f secs' % timer.pause('train_no_aug'))
 
 
-def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_policy, num_op, smoke_test, num_search, resume) -> list:
+def search_aug_policy(copied_conf, testset_ratio, num_fold, num_result_per_fold, num_policy, num_op, smoke_test, num_search, resume) -> list:
     global MODEL_ROOT, MODEL_PATHS, DATASET_ROOT
     global logger, timer
     logger.info('----- [Phase 2.] Search Test-Time Augmentation Policies -----')
@@ -299,7 +300,7 @@ def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_
     reward_attr = 'top1_valid'  # top1_valid or minus_loss
     for _ in range(1):  # run multiple times.
         for fold_idx in range(num_fold):
-            name = "search_%s_%s_fold%d_ratio%.1f" % (Config.get()['dataset'], Config.get()['model']['type'], fold_idx, cv_ratio)
+            name = "search_%s_%s_fold%d_ratio%.1f" % (Config.get()['dataset'], Config.get()['model']['type'], fold_idx, testset_ratio)
             print(name)
             register_trainable(name, lambda augs, rpt: eval_tta(copy.deepcopy(copied_conf), augs, rpt))  # augs: a dict, just like the 'exp_config'
             algo = HyperOptSearch(space, max_concurrent=4 * 20, reward_attr=reward_attr)
@@ -312,8 +313,8 @@ def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_
                     'stop': {'training_iteration': num_policy},
                     'config': {
                         'dataroot': DATASET_ROOT,
-                        'save_path': MODEL_PATHS[fold_idx],
-                        'cv_ratio_test': cv_ratio,
+                        'model_path': MODEL_PATHS[fold_idx],
+                        'testset_ratio': testset_ratio,
                         'fold_idx': fold_idx,
                         'num_op': num_op,
                         'num_policy': num_policy
@@ -322,7 +323,7 @@ def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_
             }
             results = run_experiments(exp_config, search_alg=algo, scheduler=None, verbose=0, queue_trials=True, resume=resume, raise_on_failed_trial=False)
             print()
-            results = [x for x in results if x.last_result is not None]
+            results = [x for x in results if x.last_result is not None]     # erase all None items
             results = sorted(results, key=lambda x: x.last_result[reward_attr], reverse=True)
             
             # calculate computation usage
@@ -346,14 +347,14 @@ def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_
     return final_policy_set
 
 
-def retrain(copied_conf, final_policy_set, cv_ratio, num_retrain):
+def retrain(copied_conf, final_policy_set, testset_ratio, num_retrain):
     global DATASET_ROOT
     global logger, timer
-    logger.info('----- [Phase 3.] Train with Augmentations model=%s dataset=%s aug=%s ratio(test)=%.1f -----' % (Config.get()['model']['type'], Config.get()['dataset'], Config.get()['aug'], cv_ratio))
+    logger.info('----- [Phase 3.] Train with Augmentations model=%s dataset=%s aug=%s ratio(test)=%.1f -----' % (Config.get()['model']['type'], Config.get()['dataset'], Config.get()['aug'], testset_ratio))
     timer.start(tag='train_aug')
     
-    default_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_default%d' % (cv_ratio, retrain_idx)) for retrain_idx in range(num_retrain)]
-    augment_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_augment%d' % (cv_ratio, retrain_idx)) for retrain_idx in range(num_retrain)]
+    default_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_default%d' % (testset_ratio, retrain_idx)) for retrain_idx in range(num_retrain)]
+    augment_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_augment%d' % (testset_ratio, retrain_idx)) for retrain_idx in range(num_retrain)]
     
     retrain_reqs = []
     retrain_reqs.extend([
@@ -361,9 +362,9 @@ def retrain(copied_conf, final_policy_set, cv_ratio, num_retrain):
             config=copy.deepcopy(copied_conf),
             dataroot=DATASET_ROOT,
             augment_replace=Config.get()['aug'],    # .yaml中的aug，即default的aug
-            cv_ratio_test=0.0,
+            testset_ratio=0.0,
             fold_idx=0,
-            save_path=default_path[retrain_idx],
+            model_path=default_path[retrain_idx],
             only_eval=True
         )
         for retrain_idx in range(num_retrain)
@@ -373,9 +374,9 @@ def retrain(copied_conf, final_policy_set, cv_ratio, num_retrain):
             config=copy.deepcopy(copied_conf),
             dataroot=DATASET_ROOT,
             augment_replace=final_policy_set,       # 搜出的aug
-            cv_ratio_test=0.0,
+            testset_ratio=0.0,
             fold_idx=0,
-            save_path=augment_path[retrain_idx],
+            model_path=augment_path[retrain_idx],
             only_eval=False
         )
         for retrain_idx in range(num_retrain)
@@ -433,13 +434,13 @@ def main():
     args = prepare()
     copied_conf = copy.deepcopy(Config.get().conf)
     
-    pretrain_k_folds(copied_conf, args.cv_ratio, args.num_fold)
+    pretrain_k_folds(copied_conf, args.testset_ratio, args.num_fold)
     if args.until == 1:
         sys.exit(0)
     
-    final_policy_set = search_aug_policy(copied_conf, args.cv_ratio, args.num_fold, args.num_result_per_fold, args.num_policy, args.num_op, args.smoke_test, args.num_search, args.resume)
+    final_policy_set = search_aug_policy(copied_conf, args.testset_ratio, args.num_fold, args.num_result_per_fold, args.num_policy, args.num_op, args.smoke_test, args.num_search, args.resume)
     
-    retrain(copied_conf, final_policy_set, args.cv_ratio, args.num_retrain)
+    retrain(copied_conf, final_policy_set, args.testset_ratio, args.num_retrain)
 
 
 if __name__ == '__main__':

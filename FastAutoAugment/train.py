@@ -84,27 +84,27 @@ def run_epoch(model, loader, loss_fn, optimizer, desc_default='', epoch=0, write
     return metrics
 
 
-def train_and_eval(tag, dataroot, test_ratio=0.0, fold_idx=0, reporter=None, metric='last', save_path=None, only_eval=False, horovod=False):
+def train_and_eval(tag, dataroot, testset_ratio=0.0, fold_idx=0, reporter=None, metric='last', model_path=None, only_eval=False, horovod=False):
     """
     pretrain:
         tag=None,
         dataroot=DATASET_ROOT,
-        test_ratio=cv_ratio_test,   # 默认是0.4
+        testset_ratio=testset_ratio,   # 默认是0.4
         fold_idx=fold_idx,
         reporter=None,
         metric='last',
-        save_path=MODEL_PATHS[fold_idx],
+        model_path=MODEL_PATHS[fold_idx],
         only_eval=True,
         horovod=False,
     
     retrain:
         tag=None,
         dataroot=DATASET_ROOT,
-        test_ratio=0.0,
+        testset_ratio=0.0,
         fold_idx=0,
         reporter=None,
         metric='last',
-        save_path=default_path[retrain_idx]或augment_path[retrain_idx],
+        model_path=default_path[retrain_idx]或augment_path[retrain_idx],
         only_eval=True或False,       # 默认aug：only_eval，搜出aug：不only_eval
         horovod=False,
     """
@@ -119,7 +119,7 @@ def train_and_eval(tag, dataroot, test_ratio=0.0, fold_idx=0, reporter=None, met
         reporter = lambda **kwargs: 0
 
     max_epoch = C.get()['epoch']
-    trainsampler, trainloader, validloader, testloader_ = get_dataloaders(C.get()['dataset'], C.get()['batch'], dataroot, test_ratio, split_idx=fold_idx, horovod=horovod)
+    trainsampler, trainloader, validloader, testloader_ = get_dataloaders(C.get()['dataset'], C.get()['batch'], dataroot, testset_ratio=testset_ratio, split_idx=fold_idx, horovod=horovod)
 
     # create a model & an optimizer
     model = get_model(C.get()['model'], num_class(C.get()['dataset']), data_parallel=(not horovod))
@@ -171,9 +171,9 @@ def train_and_eval(tag, dataroot, test_ratio=0.0, fold_idx=0, reporter=None, met
 
     result = OrderedDict()
     epoch_start = 1
-    if save_path and os.path.exists(save_path):
-        logger.info('%s file found. loading...' % save_path)
-        data = torch.load(save_path)
+    if model_path and os.path.exists(model_path):
+        logger.info('%s file found. loading...' % model_path)
+        data = torch.load(model_path)
         if 'model' in data or 'state_dict' in data:
             key = 'model' if 'model' in data else 'state_dict'
             logger.info('checkpoint epoch@%d' % data['epoch'])
@@ -190,7 +190,7 @@ def train_and_eval(tag, dataroot, test_ratio=0.0, fold_idx=0, reporter=None, met
             model.load_state_dict({k: v for k, v in data.items()})
         del data
     else:
-        logger.info('"%s" file not found. skip to pretrain weights...' % save_path)
+        logger.info('"%s" file not found. skip to pretrain weights...' % model_path)
         if only_eval:
             logger.warning('model checkpoint not found. only-evaluation mode is off.')
         only_eval = False
@@ -243,8 +243,8 @@ def train_and_eval(tag, dataroot, test_ratio=0.0, fold_idx=0, reporter=None, met
                 )
 
                 # save checkpoint
-                if is_master and save_path:
-                    logger.info('save model@%d to %s' % (epoch, save_path))
+                if is_master and model_path:
+                    logger.info('save model@%d to %s' % (epoch, model_path))
                     torch.save({
                         'epoch': epoch,
                         'log': {
@@ -254,7 +254,7 @@ def train_and_eval(tag, dataroot, test_ratio=0.0, fold_idx=0, reporter=None, met
                         },
                         'optimizer': optimizer.state_dict(),
                         'model': model.state_dict()
-                    }, save_path)
+                    }, model_path)
                     torch.save({
                         'epoch': epoch,
                         'log': {
@@ -264,7 +264,7 @@ def train_and_eval(tag, dataroot, test_ratio=0.0, fold_idx=0, reporter=None, met
                         },
                         'optimizer': optimizer.state_dict(),
                         'model': model.state_dict()
-                    }, save_path.replace('.pth', '_e%d_top1_%.3f_%.3f' % (epoch, rs['train']['top1'], rs['test']['top1']) + '.pth'))
+                    }, model_path.replace('.pth', '_e%d_top1_%.3f_%.3f' % (epoch, rs['train']['top1'], rs['test']['top1']) + '.pth'))
 
     del model
 
@@ -294,7 +294,7 @@ if __name__ == '__main__':
 
     import time
     t = time.time()
-    result = train_and_eval(args.tag, args.dataroot, test_ratio=args.cv_ratio, fold_idx=args.fold_idx, save_path=args.save, only_eval=args.only_eval, horovod=args.horovod, metric='test')
+    result = train_and_eval(args.tag, args.dataroot, testset_ratio=args.cv_ratio, fold_idx=args.fold_idx, model_path=args.save, only_eval=args.only_eval, horovod=args.horovod, metric='test')
     elapsed = time.time() - t
 
     logger.info('done.')
