@@ -84,7 +84,31 @@ def run_epoch(model, loader, loss_fn, optimizer, desc_default='', epoch=0, write
     return metrics
 
 
-def train_and_eval(tag, dataroot, test_ratio=0.0, cv_fold=0, reporter=None, metric='last', save_path=None, only_eval=False, horovod=False):
+def train_and_eval(tag, dataroot, test_ratio=0.0, fold_idx=0, reporter=None, metric='last', save_path=None, only_eval=False, horovod=False):
+    """
+    pretrain:
+        tag=None,
+        dataroot=DATASET_ROOT,
+        test_ratio=cv_ratio_test,   # 默认是0.4
+        fold_idx=fold_idx,
+        reporter=None,
+        metric='last',
+        save_path=MODEL_PATHS[fold_idx],
+        only_eval=True,
+        horovod=False,
+    
+    retrain:
+        tag=None,
+        dataroot=DATASET_ROOT,
+        test_ratio=0.0,
+        fold_idx=0,
+        reporter=None,
+        metric='last',
+        save_path=default_path[retrain_idx]或augment_path[retrain_idx],
+        only_eval=True或False,       # 默认aug：only_eval，搜出aug：不only_eval
+        horovod=False,
+    """
+
     if horovod:
         import horovod.torch as hvd
         hvd.init()
@@ -95,7 +119,7 @@ def train_and_eval(tag, dataroot, test_ratio=0.0, cv_fold=0, reporter=None, metr
         reporter = lambda **kwargs: 0
 
     max_epoch = C.get()['epoch']
-    trainsampler, trainloader, validloader, testloader_ = get_dataloaders(C.get()['dataset'], C.get()['batch'], dataroot, test_ratio, split_idx=cv_fold, horovod=horovod)
+    trainsampler, trainloader, validloader, testloader_ = get_dataloaders(C.get()['dataset'], C.get()['batch'], dataroot, test_ratio, split_idx=fold_idx, horovod=horovod)
 
     # create a model & an optimizer
     model = get_model(C.get()['model'], num_class(C.get()['dataset']), data_parallel=(not horovod))
@@ -254,7 +278,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataroot', type=str, default='../../datasets/pretrainedmodels', help='torchvision data folder')
     parser.add_argument('--save', type=str, default='test.pth')
     parser.add_argument('--cv-ratio', type=float, default=0.0)
-    parser.add_argument('--cv', type=int, default=0)
+    parser.add_argument('--fold_idx', type=int, default=0)
     parser.add_argument('--horovod', action='store_true')
     parser.add_argument('--only-eval', action='store_true')
     args = parser.parse_args()
@@ -270,7 +294,7 @@ if __name__ == '__main__':
 
     import time
     t = time.time()
-    result = train_and_eval(args.tag, args.dataroot, test_ratio=args.cv_ratio, cv_fold=args.cv, save_path=args.save, only_eval=args.only_eval, horovod=args.horovod, metric='test')
+    result = train_and_eval(args.tag, args.dataroot, test_ratio=args.cv_ratio, fold_idx=args.fold_idx, save_path=args.save, only_eval=args.only_eval, horovod=args.horovod, metric='test')
     elapsed = time.time() - t
 
     logger.info('done.')

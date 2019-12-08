@@ -63,22 +63,52 @@ def step_w_log(self):
 
 
 @ray.remote(num_gpus=4, max_calls=1)
-def train_model(config, dataroot, augment, cv_ratio_test, cv_fold, save_path=None, skip_exist=False):  # TODO: 解耦这里的config相关操作
-    Config.get()
-    Config.get().conf = config
-    Config.get()['aug'] = augment
+def train_model(config, dataroot, augment_replace: str, cv_ratio_test, fold_idx, save_path=None, only_eval=False):  # TODO: 解耦这里的config相关操作
+    """
+    pretrain:
+        config=copy.deepcopy(copied_conf),      # 最原始的.yaml文件
+        dataroot=DATASET_ROOT,
+        augment_replace=Config.get()['aug'],    # 不进行augment_replace，augment_replace就是最原始的.yaml文件的aug
+        cv_ratio_test=cv_ratio,                 # 默认是0.4
+        fold_idx=fold_idx,                      # 0至num_fold
+        save_path=MODEL_PATHS[fold_idx],
+        only_eval=True                          # pretrain：only_eval
     
-    result = train_and_eval(None, dataroot, cv_ratio_test, cv_fold, save_path=save_path, only_eval=skip_exist)
-    return Config.get()['model']['type'], cv_fold, result
-
-
-def eval_tta(config, augment, reporter):
+    retrain:
+        config=copy.deepcopy(copied_conf),
+        dataroot=DATASET_ROOT,
+        augment_replace=Config.get()['aug']或final_policy_set,    # .yaml中的默认aug，和搜出来的aug
+        cv_ratio_test=0.0,
+        fold_idx=0,
+        save_path=default_path[retrain_idx]或augment_path[retrain_idx],
+        only_eval=True或False                   # 默认aug：only_eval，搜出aug：不only_eval
+    """
+    
     Config.get()
     Config.get().conf = config
-    cv_ratio_test, cv_fold, save_path = augment['cv_ratio_test'], augment['cv_fold'], augment['save_path']
+    Config.get()['aug'] = augment_replace
+
+    result = train_and_eval(
+        tag=None,
+        dataroot=dataroot,
+        test_ratio=cv_ratio_test,
+        fold_idx=fold_idx,
+        reporter=None,
+        metric='last',
+        save_path=save_path,
+        only_eval=only_eval,
+        horovod=False,
+    )
+    return Config.get()['model']['type'], fold_idx, result
+
+
+def eval_tta(config, exp_config, reporter):
+    Config.get()
+    Config.get().conf = config
+    cv_ratio_test, fold_idx, save_path = exp_config['cv_ratio_test'], exp_config['fold_idx'], exp_config['save_path']
     
     # setup - provided augmentation rules
-    Config.get()['aug'] = policy_decoder(augment, augment['num_policy'], augment['num_op'])
+    Config.get()['aug'] = policy_decoder(exp_config, exp_config['num_policy'], exp_config['num_op'])
     
     # eval
     model = get_model(Config.get()['model'], num_class(Config.get()['dataset']))
@@ -90,8 +120,8 @@ def eval_tta(config, augment, reporter):
     model.eval()
     
     loaders = []
-    for _ in range(augment['num_policy']):  # TODO
-        _, tl, validloader, tl2 = get_dataloaders(Config.get()['dataset'], Config.get()['batch'], augment['dataroot'], cv_ratio_test, split_idx=cv_fold)
+    for _ in range(exp_config['num_policy']):  # TODO
+        _, tl, validloader, tl2 = get_dataloaders(Config.get()['dataset'], Config.get()['batch'], exp_config['dataroot'], cv_ratio_test, split_idx=fold_idx)
         loaders.append(iter(validloader))
         del tl, tl2
     
@@ -148,7 +178,7 @@ def prepare() -> argparse.Namespace:
     parser.add_argument('--num_op', type=int, default=2)
     parser.add_argument('--num_policy', type=int, default=5)
     parser.add_argument('--num_search', type=int, default=200)
-    parser.add_argument('--retrain_times', type=int, default=5)
+    parser.add_argument('--num_retrain', type=int, default=5)
     parser.add_argument('--cv_ratio', type=float, default=0.4)
     parser.add_argument('--decay', type=float, default=-1)
     parser.add_argument('--redis', type=str, default='')
@@ -204,18 +234,18 @@ def prepare() -> argparse.Namespace:
 def pretrain_k_folds(copied_conf, cv_ratio, num_fold) -> None:
     global MODEL_PATHS, DATASET_ROOT
     global logger, timer
-    logger.info('----- [Phase 1.] Train without Augmentations cv=%d ratio(test)=%.1f -----' % (num_fold, cv_ratio))
+    logger.info('----- [Phase 1.] Train with Default Augmentations cv=%d ratio(test)=%.1f -----' % (num_fold, cv_ratio))
     timer.start(tag='train_no_aug')
     
-    reqs = [
+    pretrain_reqs = [
         train_model.remote(
             config=copy.deepcopy(copied_conf),
             dataroot=DATASET_ROOT,
-            augment=Config.get()['aug'],
+            augment_replace=Config.get()['aug'],    # .yaml中的aug，即default的aug
             cv_ratio_test=cv_ratio,
-            cv_fold=fold_idx,
+            fold_idx=fold_idx,
             save_path=MODEL_PATHS[fold_idx],
-            skip_exist=True
+            only_eval=True
         )
         for fold_idx in range(num_fold)
     ]
@@ -244,7 +274,7 @@ def pretrain_k_folds(copied_conf, cv_ratio, num_fold) -> None:
             break
     
     logger.info('getting results...')
-    pretrain_results = ray.get(reqs)
+    pretrain_results = ray.get(pretrain_reqs)
     for r_model, r_cv, r_dict in pretrain_results:
         logger.info('model=%s cv=%d top1_train=%.4f top1_valid=%.4f' % (r_model, r_cv + 1, r_dict['top1_train'], r_dict['top1_valid']))
     logger.info('processed in %.4f secs' % timer.pause('train_no_aug'))
@@ -268,8 +298,8 @@ def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_
     total_computation = 0
     reward_attr = 'top1_valid'  # top1_valid or minus_loss
     for _ in range(1):  # run multiple times.
-        for cv_fold in range(num_fold):
-            name = "search_%s_%s_fold%d_ratio%.1f" % (Config.get()['dataset'], Config.get()['model']['type'], cv_fold, cv_ratio)
+        for fold_idx in range(num_fold):
+            name = "search_%s_%s_fold%d_ratio%.1f" % (Config.get()['dataset'], Config.get()['model']['type'], fold_idx, cv_ratio)
             print(name)
             register_trainable(name, lambda augs, rpt: eval_tta(copy.deepcopy(copied_conf), augs, rpt))  # augs: a dict, just like the 'exp_config'
             algo = HyperOptSearch(space, max_concurrent=4 * 20, reward_attr=reward_attr)
@@ -282,9 +312,9 @@ def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_
                     'stop': {'training_iteration': num_policy},
                     'config': {
                         'dataroot': DATASET_ROOT,
-                        'save_path': MODEL_PATHS[cv_fold],
+                        'save_path': MODEL_PATHS[fold_idx],
                         'cv_ratio_test': cv_ratio,
-                        'cv_fold': cv_fold,
+                        'fold_idx': fold_idx,
                         'num_op': num_op,
                         'num_policy': num_policy
                     },
@@ -316,23 +346,48 @@ def search_aug_policy(copied_conf, cv_ratio, num_fold, num_result_per_fold, num_
     return final_policy_set
 
 
-def retrain(copied_conf, final_policy_set, cv_ratio, retrain_times):
+def retrain(copied_conf, final_policy_set, cv_ratio, num_retrain):
     global DATASET_ROOT
     global logger, timer
     logger.info('----- [Phase 3.] Train with Augmentations model=%s dataset=%s aug=%s ratio(test)=%.1f -----' % (Config.get()['model']['type'], Config.get()['dataset'], Config.get()['aug'], cv_ratio))
     timer.start(tag='train_aug')
     
-    default_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_default%d' % (cv_ratio, _)) for _ in range(retrain_times)]
-    augment_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_augment%d' % (cv_ratio, _)) for _ in range(retrain_times)]
-    reqs = [train_model.remote(copy.deepcopy(copied_conf), DATASET_ROOT, Config.get()['aug'], 0.0, 0, save_path=default_path[_], skip_exist=True) for _ in range(retrain_times)] + \
-           [train_model.remote(copy.deepcopy(copied_conf), DATASET_ROOT, final_policy_set, 0.0, 0, save_path=augment_path[_]) for _ in range(retrain_times)]
+    default_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_default%d' % (cv_ratio, retrain_idx)) for retrain_idx in range(num_retrain)]
+    augment_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_augment%d' % (cv_ratio, retrain_idx)) for retrain_idx in range(num_retrain)]
+    
+    retrain_reqs = []
+    retrain_reqs.extend([
+        train_model.remote(
+            config=copy.deepcopy(copied_conf),
+            dataroot=DATASET_ROOT,
+            augment_replace=Config.get()['aug'],    # .yaml中的aug，即default的aug
+            cv_ratio_test=0.0,
+            fold_idx=0,
+            save_path=default_path[retrain_idx],
+            only_eval=True
+        )
+        for retrain_idx in range(num_retrain)
+    ])
+    retrain_reqs.extend([
+        train_model.remote(
+            config=copy.deepcopy(copied_conf),
+            dataroot=DATASET_ROOT,
+            augment_replace=final_policy_set,       # 搜出的aug
+            cv_ratio_test=0.0,
+            fold_idx=0,
+            save_path=augment_path[retrain_idx],
+            only_eval=False
+        )
+        for retrain_idx in range(num_retrain)
+    ])
+    
     
     tqdm_epoch = tqdm(range(Config.get()['epoch']))
     is_done = False
     for epoch in tqdm_epoch:
         while True:
             epochs = OrderedDict()
-            for retrain_idx in range(retrain_times):
+            for retrain_idx in range(num_retrain):
                 try:
                     if os.path.exists(default_path[retrain_idx]):
                         latest_ckpt = torch.load(default_path[retrain_idx])
@@ -347,25 +402,25 @@ def retrain(copied_conf, final_policy_set, cv_ratio, retrain_times):
                     pass
             
             tqdm_epoch.set_postfix(epochs)
-            if len(epochs) == retrain_times * 2 and min(epochs.values()) >= Config.get()['epoch']:
+            if len(epochs) == num_retrain * 2 and min(epochs.values()) >= Config.get()['epoch']:
                 is_done = True
-            if len(epochs) == retrain_times * 2 and min(epochs.values()) >= epoch:
+            if len(epochs) == num_retrain * 2 and min(epochs.values()) >= epoch:
                 break
             time.sleep(10)
         if is_done:
             break
     
     logger.info('getting results...')
-    final_results = ray.get(reqs)
+    final_results = ray.get(retrain_reqs)
     
     for train_mode in ['default', 'augment']:
         avg = 0.
-        for _ in range(retrain_times):
+        for _ in range(num_retrain):
             r_model, r_cv, r_dict = final_results.pop(0)
             logger.info('[%s] top1_train=%.4f top1_test=%.4f' % (train_mode, r_dict['top1_train'], r_dict['top1_test']))
             avg += r_dict['top1_test']
-        avg /= retrain_times
-        logger.info('[%s] top1_test average=%.4f (#experiments=%d)' % (train_mode, avg, retrain_times))
+        avg /= num_retrain
+        logger.info('[%s] top1_test average=%.4f (#experiments=%d)' % (train_mode, avg, num_retrain))
     logger.info('processed in %.4f secs' % timer.pause('train_aug'))
     
     logger.info(timer)
@@ -384,7 +439,7 @@ def main():
     
     final_policy_set = search_aug_policy(copied_conf, args.cv_ratio, args.num_fold, args.num_result_per_fold, args.num_policy, args.num_op, args.smoke_test, args.num_search, args.resume)
     
-    retrain(copied_conf, final_policy_set, args.cv_ratio, args.retrain_times)
+    retrain(copied_conf, final_policy_set, args.cv_ratio, args.num_retrain)
 
 
 if __name__ == '__main__':
