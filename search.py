@@ -37,7 +37,7 @@ txt_reporter_fp = None
 
 def txt_reporter(loss_valid, top1_valid, loss_test, top1_test):
     global txt_reporter_fp
-    txt_reporter_fp.write('[top1 val]: %.5f  [top1 test]: %.5f  [loss val]: %.5f  [loss test]: %.5f\n' % (top1_valid, top1_test, loss_valid, loss_test))
+    # txt_reporter_fp.write('[top1 val]: %.5f  [top1 test]: %.5f  [loss val]: %.5f  [loss test]: %.5f\n' % (top1_valid, top1_test, loss_valid, loss_test))
 
 
 def _check_directory(directory):
@@ -99,7 +99,7 @@ def train_model(config, dataroot, augment_replace: str, testset_ratio, fold_idx,
         dataroot=dataroot,
         testset_ratio=testset_ratio,
         fold_idx=fold_idx,
-        reporter=txt_reporter,
+        reporter=None,      # TODO: 怎么加reporter好？不能用txt_reporter_fp这种形式！
         metric='last',
         model_path=model_path,
         only_eval=only_eval,
@@ -229,7 +229,7 @@ def prepare() -> argparse.Namespace:
     REPORTER_PATH = os.path.join(EXEC_ROOT, 'report.txt')
     print('REPORTER_PATH:', REPORTER_PATH)
     logger.info('REPORTER_PATH: %s' % REPORTER_PATH)
-    txt_reporter_fp = open(REPORTER_PATH, 'w')
+    # txt_reporter_fp = open(REPORTER_PATH, 'w')
     
     if args.decay > 0:
         logger.info('decay=%.4f' % args.decay)
@@ -251,7 +251,7 @@ def pretrain_k_folds(copied_conf, testset_ratio, num_fold) -> None:
     global MODEL_PATHS, DATASET_ROOT, txt_reporter_fp
     global logger, timer
     logger.info('----- [Phase 1.] Train with Default Augmentations cv=%d testset ratio=%.2f -----' % (num_fold, testset_ratio))
-    txt_reporter_fp.write('----- [Phase 1.] Train with Default Augmentations cv=%d testset ratio=%.2f -----\n' % (num_fold, testset_ratio))
+    # txt_reporter_fp.write('----- [Phase 1.] Train with Default Augmentations cv=%d testset ratio=%.2f -----\n' % (num_fold, testset_ratio))
     timer.start(tag='train_no_aug')
     
     pretrain_reqs = [
@@ -291,20 +291,20 @@ def pretrain_k_folds(copied_conf, testset_ratio, num_fold) -> None:
             break
     
     logger.info('getting results of [Phase 1.]...')
-    txt_reporter_fp.write('getting results of [Phase 1.]...\n')
+    # txt_reporter_fp.write('getting results of [Phase 1.]...\n')
     pretrain_results = ray.get(pretrain_reqs)
     for r_model, r_cv, r_dict in pretrain_results:
         logger.info('model=%s cv=%d top1_train=%.4f top1_valid=%.4f' % (r_model, r_cv + 1, r_dict['top1_train'], r_dict['top1_valid']))
-        txt_reporter_fp.write('model=%s cv=%d top1_train=%.4f top1_valid=%.4f\n' % (r_model, r_cv + 1, r_dict['top1_train'], r_dict['top1_valid']))
+        # txt_reporter_fp.write('model=%s cv=%d top1_train=%.4f top1_valid=%.4f\n' % (r_model, r_cv + 1, r_dict['top1_train'], r_dict['top1_valid']))
     logger.info('processed in %.4f secs' % timer.pause('train_no_aug'))
-    txt_reporter_fp.write('processed in %.4f secs\n' % timer.pause('train_no_aug'))
+    # txt_reporter_fp.write('processed in %.4f secs\n' % timer.pause('train_no_aug'))
 
 
 def search_aug_policy(copied_conf, testset_ratio, num_fold, num_result_per_fold, num_policy, num_op, smoke_test, num_search, resume) -> list:
     global MODEL_ROOT, MODEL_PATHS, DATASET_ROOT, POLICY_PATH, txt_reporter_fp
     global logger, timer
     logger.info('----- [Phase 2.] Search Test-Time Augmentation Policies -----')
-    txt_reporter_fp.write('----- [Phase 2.] Search Test-Time Augmentation Policies -----\n')
+    # txt_reporter_fp.write('----- [Phase 2.] Search Test-Time Augmentation Policies -----\n')
     timer.start(tag='search')
     
     ops = augment_list(False)
@@ -353,17 +353,17 @@ def search_aug_policy(copied_conf, testset_ratio, num_fold, num_result_per_fold,
             for result in results[:num_result_per_fold]:
                 final_policy = policy_decoder(result.config, num_policy, num_op)
                 logger.info('loss=%.12f top1_valid=%.4f %s' % (result.last_result['minus_loss'], result.last_result['top1_valid'], final_policy))
-                txt_reporter_fp.write('loss=%.12f top1_valid=%.4f %s\n' % (result.last_result['minus_loss'], result.last_result['top1_valid'], final_policy))
+                # txt_reporter_fp.write('loss=%.12f top1_valid=%.4f %s\n' % (result.last_result['minus_loss'], result.last_result['top1_valid'], final_policy))
                 
                 final_policy = remove_deplicates(final_policy)
                 final_policy_set.extend(final_policy)
 
     logger.info('getting results of [Phase 2.]...')
-    txt_reporter_fp.write('getting results of [Phase 2.]...\n')
+    # txt_reporter_fp.write('getting results of [Phase 2.]...\n')
     logger.info('len(final_policy_set)=%d' % len(final_policy_set))
-    txt_reporter_fp.write('len(final_policy_set)=%d\n' % len(final_policy_set))
+    # txt_reporter_fp.write('len(final_policy_set)=%d\n' % len(final_policy_set))
     logger.info('processed in %.4f secs, gpu hours=%.4f' % (timer.pause('search'), total_computation / 3600.))
-    txt_reporter_fp.write('processed in %.4f secs, gpu hours=%.4f\n' % (timer.pause('search'), total_computation / 3600.))
+    # txt_reporter_fp.write('processed in %.4f secs, gpu hours=%.4f\n' % (timer.pause('search'), total_computation / 3600.))
     
     logger.info(json.dumps(final_policy_set))
     with open(POLICY_PATH, 'w') as fp:
@@ -376,7 +376,7 @@ def retrain(copied_conf, final_policy_set, testset_ratio, num_retrain):
     global DATASET_ROOT, txt_reporter_fp
     global logger, timer
     logger.info('----- [Phase 3.] Train with Augmentations model=%s dataset=%s aug=%s ratio(test)=%.1f -----' % (Config.get()['model']['type'], Config.get()['dataset'], Config.get()['aug'], testset_ratio))
-    txt_reporter_fp.write('----- [Phase 3.] Train with Augmentations model=%s dataset=%s aug=%s ratio(test)=%.1f -----\n' % (Config.get()['model']['type'], Config.get()['dataset'], Config.get()['aug'], testset_ratio))
+    # txt_reporter_fp.write('----- [Phase 3.] Train with Augmentations model=%s dataset=%s aug=%s ratio(test)=%.1f -----\n' % (Config.get()['model']['type'], Config.get()['dataset'], Config.get()['aug'], testset_ratio))
     timer.start(tag='train_aug')
     
     default_path = [_get_model_path(Config.get()['dataset'], Config.get()['model']['type'], 'ratio%.1f_default%d' % (testset_ratio, retrain_idx)) for retrain_idx in range(num_retrain)]
@@ -438,7 +438,7 @@ def retrain(copied_conf, final_policy_set, testset_ratio, num_retrain):
             break
 
     logger.info('getting results of [Phase 3.]...')
-    txt_reporter_fp.write('getting results of [Phase 3.]...\n')
+    # txt_reporter_fp.write('getting results of [Phase 3.]...\n')
     final_results = ray.get(retrain_reqs)
     
     for train_mode in ['default', 'augment']:
@@ -446,13 +446,13 @@ def retrain(copied_conf, final_policy_set, testset_ratio, num_retrain):
         for _ in range(num_retrain):
             r_model, r_cv, r_dict = final_results.pop(0)
             logger.info('[%s] top1_train=%.4f top1_test=%.4f' % (train_mode, r_dict['top1_train'], r_dict['top1_test']))
-            txt_reporter_fp.write('[%s] top1_train=%.4f top1_test=%.4f\n' % (train_mode, r_dict['top1_train'], r_dict['top1_test']))
+            # txt_reporter_fp.write('[%s] top1_train=%.4f top1_test=%.4f\n' % (train_mode, r_dict['top1_train'], r_dict['top1_test']))
             avg += r_dict['top1_test']
         avg /= num_retrain
         logger.info('[%s] top1_test average=%.4f (#experiments=%d)' % (train_mode, avg, num_retrain))
-        txt_reporter_fp.write('[%s] top1_test average=%.4f (#experiments=%d)\n' % (train_mode, avg, num_retrain))
+        # txt_reporter_fp.write('[%s] top1_test average=%.4f (#experiments=%d)\n' % (train_mode, avg, num_retrain))
     logger.info('processed in %.4f secs' % timer.pause('train_aug'))
-    txt_reporter_fp.write('processed in %.4f secs\n' % timer.pause('train_aug'))
+    # txt_reporter_fp.write('processed in %.4f secs\n' % timer.pause('train_aug'))
     
     logger.info(timer)
 
