@@ -189,6 +189,7 @@ def get_dataloaders(dataset, batch, dataroot, testset_ratio=0.15, split_idx=0, h
             list(range(len(total_trainset))),
             total_trainset.train_labels if using_attr_train_labels else total_trainset.targets
         )
+        train_idx, valid_idx = None, None
         for _ in range(split_idx + 1):
             train_idx, valid_idx = next(sss)
 

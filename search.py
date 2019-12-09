@@ -29,7 +29,7 @@ from FastAutoAugment.train import train_and_eval
 from theconf import Config, ConfigArgumentParser
 from pystopwatch2 import PyStopwatch
 
-EXEC_ROOT, MODEL_ROOT, MODEL_PATHS, DATASET_ROOT = None, None, None, None
+EXEC_ROOT, MODEL_ROOT, MODEL_PATHS, DATASET_ROOT, POLICY_PATH = None, None, None, None, None
 timer = PyStopwatch()
 logger = get_logger('Fast AutoAugment')
 
@@ -69,7 +69,7 @@ def train_model(config, dataroot, augment_replace: str, testset_ratio, fold_idx,
         config=copy.deepcopy(copied_conf),      # 最原始的.yaml文件
         dataroot=DATASET_ROOT,
         augment_replace=Config.get()['aug'],    # 不进行augment_replace，augment_replace就是最原始的.yaml文件的aug
-        testset_ratio=testset_ratio,                 # 默认是0.4
+        testset_ratio=testset_ratio,            # 默认是0.4
         fold_idx=fold_idx,                      # 0至num_fold
         model_path=MODEL_PATHS[fold_idx],
         only_eval=True                          # pretrain：only_eval
@@ -78,7 +78,7 @@ def train_model(config, dataroot, augment_replace: str, testset_ratio, fold_idx,
         config=copy.deepcopy(copied_conf),
         dataroot=DATASET_ROOT,
         augment_replace=Config.get()['aug']或final_policy_set,    # .yaml中的默认aug，和搜出来的aug
-        testset_ratio=0.0,
+        testset_ratio=0.0,                      # 不需要测试集
         fold_idx=0,
         model_path=default_path[retrain_idx]或augment_path[retrain_idx],
         only_eval=True或False                   # 默认aug：only_eval，搜出aug：不only_eval
@@ -138,16 +138,16 @@ def eval_tta(config, exp_config, reporter):
                 data = data.cuda()
                 label = label.cuda()
                 
-                pred = model(data)
+                logits = model(data)
                 
-                loss = loss_fn(pred, label)
+                loss = loss_fn(logits, label)
                 losses.append(loss.detach().cpu().numpy())
                 
-                _, pred = pred.topk(1, 1, True, True)
-                pred = pred.t()
-                correct = pred.eq(label.view(1, -1).expand_as(pred)).detach().cpu().numpy()
+                _, logits = logits.topk(1, 1, True, True)
+                logits.t_()
+                correct = logits.eq(label.view(1, -1).expand_as(logits)).detach().cpu().numpy()
                 corrects.append(correct)
-                del loss, correct, pred, data, label
+                del loss, correct, logits, data, label
             
             losses = np.concatenate(losses)
             losses_min = np.min(losses, axis=0).squeeze()
@@ -173,7 +173,7 @@ def eval_tta(config, exp_config, reporter):
 def prepare() -> argparse.Namespace:
     parser = ConfigArgumentParser(conflict_handler='resolve')
     # parser.add_argument('--dataroot', type=str, default='~/datasets', help='torchvision data folder')
-    parser.add_argument('--until', type=int, default=5)
+    parser.add_argument('--start_phase', type=int, default=1)
     parser.add_argument('--num_fold', type=int, default=5)
     parser.add_argument('--num_result_per_fold', type=int, default=10)
     parser.add_argument('--num_op', type=int, default=2)
@@ -192,19 +192,20 @@ def prepare() -> argparse.Namespace:
     
     logger.info('args type: %s' % str(type(args)))
     
-    global EXEC_ROOT, MODEL_ROOT, MODEL_PATHS, DATASET_ROOT
+    global EXEC_ROOT, MODEL_ROOT, MODEL_PATHS, DATASET_ROOT, POLICY_PATH
     
     EXEC_ROOT = os.getcwd()  # fast-autoaugment/experiments/xxx
     logger.info('EXEC_ROOT: %s' % EXEC_ROOT)
+
     MODEL_ROOT = os.path.join(EXEC_ROOT, 'models')  # fast-autoaugment/experiments/xxx/models
+    _check_directory(MODEL_ROOT)
     logger.info('MODEL_ROOT: %s' % MODEL_ROOT)
     
     DATASET_ROOT = os.path.abspath(os.path.join(os.path.expanduser('~'), 'datasets', Config.get()['dataset'].lower()))  # ~/datasets/cifar10
-    logger.info('DATASET_ROOT: %s' % DATASET_ROOT)
-    
-    _check_directory(MODEL_ROOT)
     _check_directory(DATASET_ROOT)
-    
+    logger.info('DATASET_ROOT: %s' % DATASET_ROOT)
+
+    POLICY_PATH = os.path.join(MODEL_ROOT, 'final_policy_set.json')
     MODEL_PATHS = [
         _get_model_path(
             dataset=Config.get()['dataset'],
@@ -282,7 +283,7 @@ def pretrain_k_folds(copied_conf, testset_ratio, num_fold) -> None:
 
 
 def search_aug_policy(copied_conf, testset_ratio, num_fold, num_result_per_fold, num_policy, num_op, smoke_test, num_search, resume) -> list:
-    global MODEL_ROOT, MODEL_PATHS, DATASET_ROOT
+    global MODEL_ROOT, MODEL_PATHS, DATASET_ROOT, POLICY_PATH
     global logger, timer
     logger.info('----- [Phase 2.] Search Test-Time Augmentation Policies -----')
     timer.start(tag='search')
@@ -309,7 +310,7 @@ def search_aug_policy(copied_conf, testset_ratio, num_fold, num_result_per_fold,
                 name: {
                     'run': name,
                     'num_samples': 4 if smoke_test else num_search,
-                    'resources_per_trial': {'gpu': 1},
+                    'resources_per_trial': {'gpu': 1},  # TODO: 改成4？
                     'stop': {'training_iteration': num_policy},
                     'config': {
                         'dataroot': DATASET_ROOT,
@@ -337,13 +338,12 @@ def search_aug_policy(copied_conf, testset_ratio, num_fold, num_result_per_fold,
                 final_policy = remove_deplicates(final_policy)
                 final_policy_set.extend(final_policy)
 
-    with open(os.path.join(MODEL_ROOT, 'final_policy_set.json', 'wb')) as fp:
-        json.dump(final_policy_set, fp, indent=4)
-
     logger.info(json.dumps(final_policy_set))
     logger.info('len(final_policy_set)=%d' % len(final_policy_set))
     logger.info('processed in %.4f secs, gpu hours=%.4f' % (timer.pause('search'), total_computation / 3600.))
-    
+    with open(POLICY_PATH, 'w') as fp:
+        json.dump(final_policy_set, fp, indent=4)
+
     return final_policy_set
 
 
@@ -433,14 +433,20 @@ def main():
 
     args = prepare()
     copied_conf = copy.deepcopy(Config.get().conf)
+
+    if args.start_phase <= 1:
+        pretrain_k_folds(copied_conf, args.testset_ratio, args.num_fold)
+
+    final_policy_set = []
+    if args.start_phase <= 2:
+        final_policy_set.extend(search_aug_policy(copied_conf, args.testset_ratio, args.num_fold, args.num_result_per_fold, args.num_policy, args.num_op, args.smoke_test, args.num_search, args.resume))
+    else:
+        global POLICY_PATH
+        with open(POLICY_PATH, 'r') as fp:
+            final_policy_set.extend(list(json.load(fp)))
     
-    pretrain_k_folds(copied_conf, args.testset_ratio, args.num_fold)
-    if args.until == 1:
-        sys.exit(0)
-    
-    final_policy_set = search_aug_policy(copied_conf, args.testset_ratio, args.num_fold, args.num_result_per_fold, args.num_policy, args.num_op, args.smoke_test, args.num_search, args.resume)
-    
-    retrain(copied_conf, final_policy_set, args.testset_ratio, args.num_retrain)
+    if args.start_phase <= 3:
+        retrain(copied_conf, final_policy_set, args.testset_ratio, args.num_retrain)
 
 
 if __name__ == '__main__':
