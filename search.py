@@ -478,7 +478,7 @@ def main():
     if args.start_phase <= 3:
         retrain(copied_conf, final_policy_set, args.testset_ratio, args.num_retrain)
 
-    txt_reporter_fp.close()
+    # txt_reporter_fp.close()
 
 
 if __name__ == '__main__':
