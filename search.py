@@ -229,7 +229,7 @@ def prepare() -> argparse.Namespace:
     REPORTER_PATH = os.path.join(EXEC_ROOT, 'report.txt')
     print('REPORTER_PATH:', REPORTER_PATH)
     logger.info('REPORTER_PATH: %s' % REPORTER_PATH)
-    txt_reporter_fp = open(REPORTER_PATH, 'a')
+    txt_reporter_fp = open(REPORTER_PATH, 'w')
     
     if args.decay > 0:
         logger.info('decay=%.4f' % args.decay)
