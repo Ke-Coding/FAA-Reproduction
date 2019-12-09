@@ -32,6 +32,7 @@ def get_dataloaders(dataset, batch, dataroot, testset_ratio=0.15, split_idx=0, h
     # torchvision 0.2(sh36 r0.3.0): train_labels
     # torchvision 0.4(local): targets
     # torchvision 0.4.1(sh36 r0.3.2): (not have attr '__version__')targets
+    # target_lb: 一直都是-1
     using_attr_train_labels = False
     try:
         torchvision_version = torchvision.__version__
@@ -184,6 +185,7 @@ def get_dataloaders(dataset, batch, dataroot, testset_ratio=0.15, split_idx=0, h
 
     train_sampler = None
     if testset_ratio > 0.0:
+        # StratifiedShuffleSplit: 划分k折时，保证每折中每一类的比例是相同的（所以split函数需要传label）
         sss = StratifiedShuffleSplit(n_splits=5, test_size=testset_ratio, random_state=0)
         sss = sss.split(
             list(range(len(total_trainset))),
@@ -194,8 +196,8 @@ def get_dataloaders(dataset, batch, dataroot, testset_ratio=0.15, split_idx=0, h
             train_idx, valid_idx = next(sss)
 
         if target_lb >= 0:
-            train_idx = [i for i in train_idx if total_trainset.targets[i] == target_lb]
-            valid_idx = [i for i in valid_idx if total_trainset.targets[i] == target_lb]
+            train_idx = [i for i in train_idx if total_trainset.targets[i] == target_lb]    # 只要第target_lb类的数据
+            valid_idx = [i for i in valid_idx if total_trainset.targets[i] == target_lb]    # 只要第target_lb类的数据
 
         train_sampler = SubsetRandomSampler(train_idx)
         valid_sampler = SubsetSampler(valid_idx)
@@ -250,11 +252,11 @@ class CutoutDefault(object):
 
 
 class Augmentation(object):
-    def __init__(self, policies):
+    def __init__(self, policies):   # policies: list of a pair of op, policies[i]: i-th pair of op
         self.policies = policies
 
     def __call__(self, img):
-        for _ in range(1):
+        for _ in range(1):  # 每张照片只会随机地经过一个op pair
             policy = random.choice(self.policies)
             for name, pr, level in policy:
                 if random.random() > pr:

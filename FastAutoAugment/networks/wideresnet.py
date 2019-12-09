@@ -35,7 +35,7 @@ class WideBasic(nn.Module):
                 nn.Conv2d(inplanes, outplanes, kernel_size=1, stride=stride, bias=True),
             )
 
-    def forward(self, x):
+    def forward(self, x):   # bn-af-conv: PreAct
         out = self.conv1(F.relu(self.bn1(x), inplace=True))
         if self.using_dropout:
             out = self.dropout(out)
