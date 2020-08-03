@@ -1,6 +1,6 @@
 # Fast AutoAugment **(Accepted at NeurIPS 2019)**
 
-Official [Fast AutoAugment](https://arxiv.org/abs/1905.00397) implementation in PyTorch.
+Unofficial [Fast AutoAugment](https://arxiv.org/abs/1905.00397) implementation in PyTorch.
 
 - Fast AutoAugment learns augmentation policies using a more efficient search strategy based on density matching.
 - Fast AutoAugment speeds up the search time by orders of magnitude while maintaining the comparable performances.
